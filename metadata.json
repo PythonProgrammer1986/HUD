@@ -1,0 +1,9 @@
+{
+  "name": "DriveSight India",
+  "description": "On-device browser-vision 4-wheeler ADAS cockpit for Indian roads featuring lane departure warnings, two-wheeler/auto-rickshaw/cattle detection, unmarked speed breakers, wrong-side alerts, and speed limit monitoring.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ],
+  "majorCapabilities": []
+}
