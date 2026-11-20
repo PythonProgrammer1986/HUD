@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Camera, ListOrdered, MonitorPlay, SlidersHorizontal, X } from 'lucide-react';
 import { CalibrationSidebar } from './components/CalibrationSidebar';
 import { HudViewport } from './components/HudViewport';
 import { MethodologyView } from './components/MethodologyView';
@@ -12,6 +13,7 @@ import {
   ActiveAlert,
   AppView,
   CalibrationConfig,
+  CameraFacing,
   DEFAULT_CALIBRATION,
   HazardCategory,
   HazardEventRecord,
@@ -115,7 +117,10 @@ export default function App() {
   // Camera & Video Input State
   const [cameraDevices, setCameraDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [cameraFacing, setCameraFacing] = useState<CameraFacing>('environment');
+  const [activeCameraLabel, setActiveCameraLabel] = useState('');
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [mobileSheet, setMobileSheet] = useState<'none' | 'setup' | 'alerts'>('none');
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState<string | null>(null);
   const [videoPlaying, setVideoPlaying] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
@@ -254,7 +259,40 @@ export default function App() {
     };
   }, [sourceMode, useGpsSpeed]);
 
-  // Manage Live Camera Stream
+  // Keep mobile screen awake while live camera or Windshield HUD is active
+  useEffect(() => {
+    if (sourceMode !== 'camera' && !windshieldMode) return;
+    let wakeLock: WakeLockSentinel | null = null;
+    let cancelled = false;
+
+    const acquire = async () => {
+      try {
+        if ('wakeLock' in navigator && !cancelled) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch {
+        // Wake lock unsupported or blocked on low-battery mode
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void acquire();
+      }
+    };
+
+    void acquire();
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
+      if (wakeLock) {
+        void wakeLock.release().catch(() => {});
+      }
+    };
+  }, [sourceMode, windshieldMode]);
+
+  // Manage Live Camera Stream (defaults strictly to mobile back camera: facingMode 'environment')
   const stopCameraStream = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
@@ -266,6 +304,7 @@ export default function App() {
     if (sourceMode !== 'camera') {
       stopCameraStream();
       setCameraError(null);
+      setActiveCameraLabel('');
       return;
     }
 
@@ -274,29 +313,47 @@ export default function App() {
       setCameraError(null);
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error('Browser camera API is unavailable in this context.');
+          throw new Error('Browser camera API requires HTTPS or localhost.');
         }
 
-        const constraints: MediaStreamConstraints = {
-          audio: false,
-          video: selectedCameraId
-            ? { deviceId: { exact: selectedCameraId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-            : { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-        };
+        const preferredVideoConstraints: MediaTrackConstraints = selectedCameraId
+          ? {
+              deviceId: { exact: selectedCameraId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            }
+          : {
+              facingMode: { ideal: cameraFacing },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            };
 
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: preferredVideoConstraints,
+          });
+        } catch {
+          // Relax resolution constraints on mobile devices that reject 1280x720 ideal
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { facingMode: cameraFacing },
+          });
+        }
+
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
         streamRef.current = stream;
 
+        const activeTrack = stream.getVideoTracks()[0];
+        setActiveCameraLabel(activeTrack?.label || (cameraFacing === 'environment' ? 'Back Camera' : 'Front Camera'));
+
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter((d) => d.kind === 'videoinput');
         setCameraDevices(videoInputs);
-        if (!selectedCameraId && videoInputs[0]) {
-          setSelectedCameraId(videoInputs[0].deviceId);
-        }
 
         const videoEl = videoRef.current;
         if (videoEl) {
@@ -319,7 +376,7 @@ export default function App() {
       cancelled = true;
       stopCameraStream();
     };
-  }, [sourceMode, selectedCameraId, stopCameraStream]);
+  }, [sourceMode, selectedCameraId, cameraFacing, stopCameraStream]);
 
   // Manage Uploaded Video Playback
   useEffect(() => {
@@ -501,60 +558,80 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleSelectCameraFacing = (facing: CameraFacing) => {
+    alertAudioEngine.unlock();
+    setSelectedCameraId('');
+    setCameraFacing(facing);
+    setSourceMode('camera');
+    visionEngineRef.current?.resetTracking();
+  };
+
+  const sidebarProps = {
+    sourceMode,
+    onSelectSource: handleSelectSource,
+    roadClassId,
+    onSelectRoadClass: setRoadClassId,
+    calibration,
+    onUpdateCalibration: (patch: Partial<CalibrationConfig>) =>
+      setCalibration((prev) => ({ ...prev, ...patch })),
+    onResetCalibration: () => setCalibration(DEFAULT_CALIBRATION),
+    simControls,
+    onUpdateSimControls: (patch: Partial<SimulatorControls>) =>
+      setSimControls((prev) => ({ ...prev, ...patch })),
+    onInjectSimHazard: (
+      kind: 'speed_breaker' | 'pothole' | 'cut_in' | 'wrong_side' | 'cattle'
+    ) => {
+      alertAudioEngine.unlock();
+      simulatorRef.current?.injectHazard(kind);
+    },
+    cameraDevices,
+    selectedCameraId,
+    onSelectCameraId: setSelectedCameraId,
+    cameraFacing,
+    onSelectCameraFacing: handleSelectCameraFacing,
+    activeCameraLabel,
+    onVideoUpload: handleVideoUpload,
+    videoPlaying,
+    onToggleVideoPlay: handleToggleVideoPlay,
+    videoProgress,
+    videoDuration,
+    onSeekVideo: handleSeekVideo,
+    useGpsSpeed,
+    onToggleUseGpsSpeed: setUseGpsSpeed,
+    manualSpeedKmh,
+    onChangeManualSpeed: setManualSpeedKmh,
+    turnSignal,
+    onSetTurnSignal: setTurnSignal,
+    onTestAudio: () => alertAudioEngine.playTestBeep('caution'),
+  };
+
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#07090E] text-slate-100">
+    <div className="flex h-dvh w-screen flex-col overflow-hidden bg-[#07090E] text-slate-100">
       {!windshieldMode && (
         <TopBar
           activeView={activeView}
-          onSelectView={setActiveView}
+          onSelectView={(v) => {
+            setActiveView(v);
+            setMobileSheet('none');
+          }}
           windshieldMode={windshieldMode}
           onToggleWindshieldMode={() => {
             alertAudioEngine.unlock();
             setActiveView('cockpit');
+            setMobileSheet('none');
             setWindshieldMode((v) => !v);
           }}
         />
       )}
 
       {activeView === 'cockpit' && (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+            {/* Desktop Left Calibration Rail */}
             {!windshieldMode && (
-              <CalibrationSidebar
-                sourceMode={sourceMode}
-                onSelectSource={handleSelectSource}
-                roadClassId={roadClassId}
-                onSelectRoadClass={setRoadClassId}
-                calibration={calibration}
-                onUpdateCalibration={(patch) =>
-                  setCalibration((prev) => ({ ...prev, ...patch }))
-                }
-                onResetCalibration={() => setCalibration(DEFAULT_CALIBRATION)}
-                simControls={simControls}
-                onUpdateSimControls={(patch) =>
-                  setSimControls((prev) => ({ ...prev, ...patch }))
-                }
-                onInjectSimHazard={(kind) => {
-                  alertAudioEngine.unlock();
-                  simulatorRef.current?.injectHazard(kind);
-                }}
-                cameraDevices={cameraDevices}
-                selectedCameraId={selectedCameraId}
-                onSelectCameraId={setSelectedCameraId}
-                onVideoUpload={handleVideoUpload}
-                videoPlaying={videoPlaying}
-                onToggleVideoPlay={handleToggleVideoPlay}
-                videoProgress={videoProgress}
-                videoDuration={videoDuration}
-                onSeekVideo={handleSeekVideo}
-                useGpsSpeed={useGpsSpeed}
-                onToggleUseGpsSpeed={setUseGpsSpeed}
-                manualSpeedKmh={manualSpeedKmh}
-                onChangeManualSpeed={setManualSpeedKmh}
-                turnSignal={turnSignal}
-                onSetTurnSignal={setTurnSignal}
-                onTestAudio={() => alertAudioEngine.playTestBeep('caution')}
-              />
+              <div className="hidden lg:flex lg:min-h-0">
+                <CalibrationSidebar {...sidebarProps} />
+              </div>
             )}
 
             <HudViewport
@@ -562,6 +639,7 @@ export default function App() {
               videoRef={videoRef}
               simCanvasRef={simCanvasRef}
               sourceMode={sourceMode}
+              cameraFacing={cameraFacing}
               visionResult={visionResult}
               calibration={calibration}
               currentSpeedKmh={currentSpeedKmh}
@@ -585,18 +663,157 @@ export default function App() {
                   voiceEnabled: !prev.voiceEnabled,
                 }))
               }
+              onToggleCameraFacing={() =>
+                handleSelectCameraFacing(
+                  cameraFacing === 'environment' ? 'user' : 'environment'
+                )
+              }
               onSetTurnSignal={setTurnSignal}
               onSwitchToSimulator={() => handleSelectSource('simulator')}
             />
           </div>
 
+          {/* Desktop Bottom Telemetry Strip */}
           {!windshieldMode && (
-            <TelemetryStrip
-              visionResult={visionResult}
-              eventLog={eventLog}
-              onExportCsv={handleExportCsv}
-              onClearLog={() => setEventLog([])}
-            />
+            <div className="hidden lg:block">
+              <TelemetryStrip
+                visionResult={visionResult}
+                eventLog={eventLog}
+                onExportCsv={handleExportCsv}
+                onClearLog={() => setEventLog([])}
+              />
+            </div>
+          )}
+
+          {/* Mobile Thumb-Zone Action Bar (< lg) */}
+          {!windshieldMode && (
+            <nav
+              aria-label="Mobile cockpit controls"
+              className="grid h-14 shrink-0 grid-cols-4 border-t border-slate-800 bg-[#0B0E17] lg:hidden"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (sourceMode === 'camera') {
+                    handleSelectCameraFacing(
+                      cameraFacing === 'environment' ? 'user' : 'environment'
+                    );
+                  } else {
+                    handleSelectCameraFacing('environment');
+                  }
+                }}
+                className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 text-[11px] font-medium cursor-pointer ${
+                  sourceMode === 'camera'
+                    ? 'text-cyan-300 bg-cyan-500/10'
+                    : 'text-slate-300 hover:text-slate-100'
+                }`}
+              >
+                <Camera className="h-4 w-4" aria-hidden="true" />
+                <span>
+                  {sourceMode === 'camera'
+                    ? cameraFacing === 'environment'
+                      ? 'Back Cam'
+                      : 'Front Cam'
+                    : 'Back Cam'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectSource('simulator')}
+                className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 text-[11px] font-medium cursor-pointer ${
+                  sourceMode === 'simulator'
+                    ? 'text-cyan-300 bg-cyan-500/10'
+                    : 'text-slate-300 hover:text-slate-100'
+                }`}
+              >
+                <MonitorPlay className="h-4 w-4" aria-hidden="true" />
+                <span>Simulator</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setMobileSheet((prev) => (prev === 'setup' ? 'none' : 'setup'))
+                }
+                className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 text-[11px] font-medium cursor-pointer ${
+                  mobileSheet === 'setup'
+                    ? 'text-cyan-300 bg-cyan-500/10'
+                    : 'text-slate-300 hover:text-slate-100'
+                }`}
+              >
+                <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                <span>Setup</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setMobileSheet((prev) => (prev === 'alerts' ? 'none' : 'alerts'))
+                }
+                className={`flex min-h-[44px] flex-col items-center justify-center gap-0.5 text-[11px] font-medium cursor-pointer ${
+                  mobileSheet === 'alerts'
+                    ? 'text-cyan-300 bg-cyan-500/10'
+                    : 'text-slate-300 hover:text-slate-100'
+                }`}
+              >
+                <ListOrdered className="h-4 w-4" aria-hidden="true" />
+                <span>Alerts ({eventLog.length})</span>
+              </button>
+            </nav>
+          )}
+
+          {/* Mobile Slide-Up Setup / Calibration Sheet */}
+          {!windshieldMode && mobileSheet === 'setup' && (
+            <div className="fixed inset-0 z-40 flex flex-col justify-end bg-black/65 lg:hidden">
+              <div className="flex max-h-[82dvh] flex-col border-t border-slate-700 bg-[#0B0E17]">
+                <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                  <span className="font-display text-sm font-semibold text-slate-100">
+                    Camera, Speed &amp; Calibration Setup
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMobileSheet('none')}
+                    className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded border border-slate-700 bg-slate-800 text-slate-200 cursor-pointer"
+                    aria-label="Close setup sheet"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="cockpit-scroll flex-1 overflow-y-auto">
+                  <CalibrationSidebar {...sidebarProps} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Mobile Slide-Up Alerts & Telemetry Sheet */}
+          {!windshieldMode && mobileSheet === 'alerts' && (
+            <div className="fixed inset-0 z-40 flex flex-col justify-end bg-black/65 lg:hidden">
+              <div className="flex max-h-[75dvh] flex-col border-t border-slate-700 bg-[#0B0E17]">
+                <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                  <span className="font-display text-sm font-semibold text-slate-100">
+                    Live Telemetry &amp; Hazard Log
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMobileSheet('none')}
+                    className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded border border-slate-700 bg-slate-800 text-slate-200 cursor-pointer"
+                    aria-label="Close alerts sheet"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="cockpit-scroll overflow-y-auto">
+                  <TelemetryStrip
+                    visionResult={visionResult}
+                    eventLog={eventLog}
+                    onExportCsv={handleExportCsv}
+                    onClearLog={() => setEventLog([])}
+                  />
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

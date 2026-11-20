@@ -21,16 +21,16 @@ export function TopBar({
   ];
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between gap-8 border-b border-slate-800 bg-[#0B0E17] px-5">
+    <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-slate-800 bg-[#0B0E17] px-3 sm:gap-8 sm:px-5">
       <button
         type="button"
         onClick={() => onSelectView('cockpit')}
-        className="font-display text-lg font-bold tracking-tight text-slate-100 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded"
+        className="font-display text-base sm:text-lg font-bold tracking-tight text-slate-100 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 rounded"
       >
         DriveSight India
       </button>
 
-      <nav className="flex items-center gap-6" aria-label="Primary navigation">
+      <nav className="flex items-center gap-3 sm:gap-6" aria-label="Primary navigation">
         {navItems.map((item) => {
           const isActive = activeView === item.id;
           return (
@@ -38,7 +38,7 @@ export function TopBar({
               key={item.id}
               type="button"
               onClick={() => onSelectView(item.id)}
-              className={`relative py-3 text-sm font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
+              className={`relative py-3 text-xs sm:text-sm font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 ${
                 isActive ? 'text-cyan-400' : 'text-slate-400 hover:text-slate-100'
               }`}
             >
@@ -55,17 +55,19 @@ export function TopBar({
         <button
           type="button"
           onClick={onToggleWindshieldMode}
-          className="inline-flex items-center gap-2 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-3.5 py-1.5 text-xs font-semibold text-cyan-300 transition-colors hover:bg-cyan-500/20 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
+          className="inline-flex min-h-[36px] items-center gap-1.5 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-2.5 sm:px-3.5 py-1.5 text-xs font-semibold text-cyan-300 transition-colors hover:bg-cyan-500/20 whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500"
         >
           {windshieldMode ? (
             <>
               <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Exit HUD
+              <span className="hidden sm:inline">Exit HUD</span>
+              <span className="sm:hidden">Exit</span>
             </>
           ) : (
             <>
               <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Windshield HUD
+              <span className="hidden sm:inline">Windshield HUD</span>
+              <span className="sm:hidden">HUD</span>
             </>
           )}
         </button>

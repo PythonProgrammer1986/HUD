@@ -35,9 +35,9 @@ export function TelemetryStrip({
     offsetPct < -3 ? `${Math.abs(offsetPct)}% L` : offsetPct > 3 ? `${offsetPct}% R` : '0% CTR';
 
   return (
-    <section className="flex h-52 shrink-0 flex-col border-t border-slate-800 bg-[#0B0E17] lg:flex-row">
+    <section className="flex min-h-[320px] shrink-0 flex-col border-t border-slate-800 bg-[#0B0E17] lg:h-52 lg:min-h-0 lg:flex-row">
       {/* Left 4-Metric Tabular Telemetry Summary */}
-      <div className="grid grid-cols-4 border-b border-slate-800 lg:w-96 lg:shrink-0 lg:grid-cols-2 lg:border-b-0 lg:border-r">
+      <div className="grid grid-cols-2 border-b border-slate-800 lg:w-96 lg:shrink-0 lg:border-b-0 lg:border-r">
         <div className="flex flex-col justify-center border-r border-slate-800/80 px-4 py-2.5 lg:border-b">
           <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
             Vision Rate

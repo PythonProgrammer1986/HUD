@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import {
   CalibrationConfig,
+  CameraFacing,
   INDIAN_ROAD_PROFILES,
   InputSourceMode,
   RoadClassId,
@@ -36,6 +37,9 @@ interface CalibrationSidebarProps {
   cameraDevices: MediaDeviceInfo[];
   selectedCameraId: string;
   onSelectCameraId: (id: string) => void;
+  cameraFacing: CameraFacing;
+  onSelectCameraFacing: (facing: CameraFacing) => void;
+  activeCameraLabel: string;
   onVideoUpload: (file: File) => void;
   videoPlaying: boolean;
   onToggleVideoPlay: () => void;
@@ -73,6 +77,9 @@ export function CalibrationSidebar({
   cameraDevices,
   selectedCameraId,
   onSelectCameraId,
+  cameraFacing,
+  onSelectCameraFacing,
+  activeCameraLabel,
   onVideoUpload,
   videoPlaying,
   onToggleVideoPlay,
@@ -276,21 +283,59 @@ export function CalibrationSidebar({
 
         {/* Live Camera Controls */}
         {sourceMode === 'camera' && (
-          <div className="space-y-2.5 border-t border-slate-800/80 pt-3">
+          <div className="space-y-3 border-t border-slate-800/80 pt-3">
+            <div>
+              <div className="mb-1.5 flex items-center justify-between text-xs">
+                <span className="font-medium text-slate-300">Mobile Camera Direction</span>
+                {activeCameraLabel && (
+                  <span className="truncate max-w-[140px] font-mono text-[10px] text-cyan-400">
+                    {activeCameraLabel}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => onSelectCameraFacing('environment')}
+                  className={`min-h-[40px] rounded border px-2.5 text-xs font-medium cursor-pointer ${
+                    cameraFacing === 'environment' && !selectedCameraId
+                      ? 'border-cyan-500/60 bg-cyan-500/20 text-cyan-200'
+                      : 'border-slate-800 bg-[#111827] text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Back Camera
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectCameraFacing('user')}
+                  className={`min-h-[40px] rounded border px-2.5 text-xs font-medium cursor-pointer ${
+                    cameraFacing === 'user' && !selectedCameraId
+                      ? 'border-cyan-500/60 bg-cyan-500/20 text-cyan-200'
+                      : 'border-slate-800 bg-[#111827] text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Front Camera
+                </button>
+              </div>
+            </div>
+
             {cameraDevices.length > 0 && (
               <div>
                 <label
                   htmlFor="camera-device"
                   className="mb-1 block text-xs font-medium text-slate-300"
                 >
-                  Camera Lens
+                  Specific Lens Override
                 </label>
                 <select
                   id="camera-device"
                   value={selectedCameraId}
                   onChange={(e) => onSelectCameraId(e.target.value)}
-                  className="w-full rounded-md border border-slate-800 bg-[#111827] px-2.5 py-2 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
+                  className="w-full min-h-[40px] rounded-md border border-slate-800 bg-[#111827] px-2.5 py-2 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
                 >
+                  <option value="">
+                    Auto ({cameraFacing === 'environment' ? 'Back Camera' : 'Front Camera'})
+                  </option>
                   {cameraDevices.map((dev, idx) => (
                     <option key={dev.deviceId} value={dev.deviceId}>
                       {dev.label || `Camera ${idx + 1}`}
@@ -300,7 +345,7 @@ export function CalibrationSidebar({
               </div>
             )}
             <p className="text-xs leading-relaxed text-slate-400">
-              Mount phone or dashcam horizontally facing forward. Use Calibration below to align the horizon and hood line.
+              Mount phone on dashboard or windshield with the back camera facing the road ahead. Screen stays awake while active.
             </p>
           </div>
         )}

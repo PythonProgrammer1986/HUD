@@ -2,6 +2,8 @@ export type AppView = 'cockpit' | 'methodology' | 'triplog';
 
 export type InputSourceMode = 'simulator' | 'camera' | 'video';
 
+export type CameraFacing = 'environment' | 'user';
+
 export type RoadClassId =
   | 'school'
   | 'urban'

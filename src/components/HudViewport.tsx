@@ -1,15 +1,17 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   FlipHorizontal2,
   Minimize2,
   Navigation,
+  RefreshCw,
   ShieldAlert,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import {
   CalibrationConfig,
+  CameraFacing,
   InputSourceMode,
   ModelLoadState,
   RoadClassProfile,
@@ -22,6 +24,7 @@ interface HudViewportProps {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   simCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   sourceMode: InputSourceMode;
+  cameraFacing: CameraFacing;
   visionResult: VisionFrameResult;
   calibration: CalibrationConfig;
   currentSpeedKmh: number;
@@ -35,6 +38,7 @@ interface HudViewportProps {
   onToggleWindshieldMode: () => void;
   onToggleMirror: () => void;
   onToggleVoice: () => void;
+  onToggleCameraFacing: () => void;
   onSetTurnSignal: (sig: TurnSignalState) => void;
   onSwitchToSimulator: () => void;
 }
@@ -44,6 +48,7 @@ export function HudViewport({
   videoRef,
   simCanvasRef,
   sourceMode,
+  cameraFacing,
   visionResult,
   calibration,
   currentSpeedKmh,
@@ -57,10 +62,59 @@ export function HudViewport({
   onToggleWindshieldMode,
   onToggleMirror,
   onToggleVoice,
+  onToggleCameraFacing,
   onSetTurnSignal,
   onSwitchToSimulator,
 }: HudViewportProps) {
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [mediaDims, setMediaDims] = useState<{ w: number; h: number }>({ w: 1280, h: 720 });
+
+  // Measure outer stage container for pixel-accurate portrait/landscape aspect fitting
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const update = () => {
+      setStageSize({ w: el.clientWidth, h: el.clientHeight });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Track active video natural dimensions (portrait 9:16 vs landscape 16:9 on mobile back camera)
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    const syncDims = () => {
+      if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+        setMediaDims({ w: vid.videoWidth, h: vid.videoHeight });
+      }
+    };
+    vid.addEventListener('loadedmetadata', syncDims);
+    vid.addEventListener('resize', syncDims);
+    syncDims();
+    return () => {
+      vid.removeEventListener('loadedmetadata', syncDims);
+      vid.removeEventListener('resize', syncDims);
+    };
+  }, [videoRef, sourceMode]);
+
+  const activeSourceW = sourceMode === 'simulator' ? 1280 : mediaDims.w;
+  const activeSourceH = sourceMode === 'simulator' ? 720 : mediaDims.h;
+
+  const fittedStyle = (() => {
+    if (stageSize.w <= 0 || stageSize.h <= 0) {
+      return { width: '100%', height: '100%' };
+    }
+    const scale = Math.min(stageSize.w / activeSourceW, stageSize.h / activeSourceH);
+    return {
+      width: `${Math.max(1, Math.floor(activeSourceW * scale))}px`,
+      height: `${Math.max(1, Math.floor(activeSourceH * scale))}px`,
+    };
+  })();
 
   // Render AR HUD Overlays whenever visionResult updates
   useEffect(() => {
@@ -297,7 +351,7 @@ export function HudViewport({
         ctx.restore();
       }
     }
-  }, [visionResult, calibration]);
+  }, [visionResult, calibration, activeSourceW, activeSourceH]);
 
   const topAlert =
     visionResult.activeAlerts.find((a) => a.severity === 'critical') ||
@@ -312,7 +366,9 @@ export function HudViewport({
     sourceMode === 'simulator'
       ? 'Indian Road Simulator'
       : sourceMode === 'camera'
-        ? 'Live Dash Camera'
+        ? cameraFacing === 'environment'
+          ? 'Live Back Camera'
+          : 'Live Front Camera'
         : 'Dashcam Video Replay';
 
   const modelLabel =
@@ -324,45 +380,48 @@ export function HudViewport({
 
   return (
     <section
-      className={`relative flex flex-1 flex-col overflow-hidden bg-[#05070B] ${
-        windshieldMode ? 'h-full w-full' : 'min-h-[400px]'
+      className={`relative flex flex-1 min-h-0 flex-col overflow-hidden bg-[#05070B] ${
+        windshieldMode ? 'h-full w-full' : 'min-h-[260px]'
       }`}
     >
       {/* Main Media + AR Overlay Stage */}
       <div
-        className={`relative flex flex-1 items-center justify-center overflow-hidden ${
+        ref={stageRef}
+        className={`relative flex flex-1 min-h-0 items-center justify-center overflow-hidden ${
           calibration.hudMirror ? 'scale-x-[-1]' : ''
         }`}
       >
-        {/* Source Layers */}
-        <canvas
-          ref={simCanvasRef}
-          width={1280}
-          height={720}
-          className={`h-full w-full object-contain ${
-            sourceMode === 'simulator' ? 'block' : 'hidden'
-          }`}
-        />
+        <div className="relative" style={fittedStyle}>
+          <canvas
+            ref={simCanvasRef}
+            width={1280}
+            height={720}
+            className={`h-full w-full ${
+              sourceMode === 'simulator' ? 'block' : 'hidden'
+            }`}
+          />
 
-        <video
-          ref={videoRef}
-          playsInline
-          muted
-          className={`h-full w-full object-contain ${
-            sourceMode !== 'simulator' ? 'block' : 'hidden'
-          }`}
-        />
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`h-full w-full object-fill ${
+              sourceMode !== 'simulator' ? 'block' : 'hidden'
+            }`}
+          />
 
-        {/* Hidden capture canvas used when needed */}
-        <canvas ref={canvasRef} width={640} height={360} className="hidden" />
+          {/* Hidden capture canvas used when needed */}
+          <canvas ref={canvasRef} width={640} height={360} className="hidden" />
 
-        {/* Transparent AR Overlay Canvas aligned over the stage */}
-        <canvas
-          ref={overlayRef}
-          width={1280}
-          height={720}
-          className="pointer-events-none absolute inset-0 h-full w-full object-contain"
-        />
+          {/* Transparent AR Overlay Canvas aligned 1:1 over the video/sim stage */}
+          <canvas
+            ref={overlayRef}
+            width={activeSourceW}
+            height={activeSourceH}
+            className="pointer-events-none absolute inset-0 h-full w-full"
+          />
+        </div>
 
         {/* Top Measured Contrast Scrim */}
         <div className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/80 via-black/40 to-transparent" />
@@ -527,7 +586,7 @@ export function HudViewport({
                     : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
                 }`}
               >
-                ◀ Left Signal
+                ◀ Left
               </button>
               <button
                 type="button"
@@ -540,8 +599,18 @@ export function HudViewport({
                     : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
                 }`}
               >
-                Right Signal ▶
+                Right ▶
               </button>
+              {sourceMode === 'camera' && (
+                <button
+                  type="button"
+                  onClick={onToggleCameraFacing}
+                  className="inline-flex min-h-[44px] items-center gap-1.5 bg-slate-800 px-4 text-xs font-semibold text-slate-200 hover:bg-slate-700 cursor-pointer"
+                >
+                  <RefreshCw className="h-4 w-4 text-cyan-400" />
+                  {cameraFacing === 'environment' ? 'Back Cam' : 'Front Cam'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onToggleVoice}
@@ -553,7 +622,7 @@ export function HudViewport({
                   </>
                 ) : (
                   <>
-                    <VolumeX className="h-4 w-4 text-slate-400" /> Voice Muted
+                    <VolumeX className="h-4 w-4 text-slate-400" /> Muted
                   </>
                 )}
               </button>
@@ -566,7 +635,7 @@ export function HudViewport({
                     : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
                 }`}
               >
-                <FlipHorizontal2 className="h-4 w-4" /> Mirror HUD
+                <FlipHorizontal2 className="h-4 w-4" /> Mirror
               </button>
               <button
                 type="button"
